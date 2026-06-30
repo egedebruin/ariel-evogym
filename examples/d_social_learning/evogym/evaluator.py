@@ -92,9 +92,11 @@ def evaluate_individual(args: tuple) -> dict:
             brain.set_theta(theta)
             obs, _info = env.reset()
             x_start = float(sim.object_pos_at_time(sim.get_time(), "robot")[0].mean())
+            raw = None
             for step in range(N_STEPS):
-                node_inputs, t_sig = get_node_inputs(sim, body, adjacency, step)
-                raw = brain.forward_all(node_inputs, t_sig)
+                if step % 5 == 0 or raw is None:
+                    node_inputs, t_sig = get_node_inputs(sim, body, adjacency, step)
+                    raw = brain.forward_all(node_inputs, t_sig)
                 action = scale_actions(raw)
                 obs, reward, terminated, truncated, info = env.step(action)
                 if terminated or truncated:

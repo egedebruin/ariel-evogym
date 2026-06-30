@@ -1,16 +1,17 @@
-"""EvoGym morphological descriptor — PLACEHOLDER.
-
-Returns zeros(8) until a collaborator implements voxel-based descriptors.
-When descriptors are zero, novelty = 0 and fitness = pure distance.
-"""
+"""EvoGym voxel-grid → 5-d morphological descriptor vector."""
 
 import numpy as np
 
+from examples.d_social_learning.evogym_body_descriptors import relative_activity, size, compactness, elongation, \
+    symmetry
+
 
 def voxel_descriptor(body: np.ndarray) -> np.ndarray:
-    """Return an 8-d descriptor for an EvoGym body grid.
+    """Return a 5-d descriptor for an EvoGym body grid.
 
-    Currently a stub returning zeros. Novelty will be 0 until implemented.
+    d = [relative_activity, size, compactness, elongation, symmetry]
+
+    All values are in [0, 1] by construction.
 
     Parameters
     ----------
@@ -19,6 +20,18 @@ def voxel_descriptor(body: np.ndarray) -> np.ndarray:
 
     Returns
     -------
-    np.ndarray shape (8,) in [0, 1]
+    np.ndarray shape (5,) in [0, 1]
     """
-    return np.zeros(8, dtype=np.float64)
+
+    d = np.array(
+        [
+            relative_activity(body),
+            size(body),
+            compactness(body),
+            elongation(body),
+            symmetry(body),
+        ],
+        dtype=np.float64,
+    )
+    assert np.all((d >= 0.0) & (d <= 1.0)), f"Descriptor out of [0,1]: {d}"
+    return d
