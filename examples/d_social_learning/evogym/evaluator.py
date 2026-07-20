@@ -39,6 +39,8 @@ def _load_evogym_adapter():
 import numpy as np
 
 ENV_NAME = "Walker-v0"
+# ENV_NAME = "UpStepper-v0"
+# ENV_NAME = "Carrier-v0"
 N_STEPS = 500
 N_NEIGHBORS = 8  # EvoGym Moore neighbourhood
 
@@ -91,7 +93,12 @@ def evaluate_individual(args: tuple) -> dict:
         def run_episode(theta: _np.ndarray) -> float:
             brain.set_theta(theta)
             obs, _info = env.reset()
+
             x_start = float(sim.object_pos_at_time(sim.get_time(), "robot")[0].mean())
+            x_package_start = 0
+            if ENV_NAME == "Carrier-v0":
+                x_package_start = float(sim.object_pos_at_time(sim.get_time(), "package")[0].mean())
+
             raw = None
             for step in range(N_STEPS):
                 if step % 5 == 0 or raw is None:
@@ -102,7 +109,14 @@ def evaluate_individual(args: tuple) -> dict:
                 if terminated or truncated:
                     break
             x_end = float(sim.object_pos_at_time(sim.get_time(), "robot")[0].mean())
-            return x_end - x_start
+            result = x_end - x_start # Normal fitness
+            if ENV_NAME == "Carrier-v0":
+                x_package_end = float(sim.object_pos_at_time(sim.get_time(), "package")[0].mean())
+                result = x_package_end - x_package_start # Fitness if Carrier environment and package still being carried
+                if float(sim.object_pos_at_time(sim.get_time(), "package")[0].min()) < 1.5:
+                    result = -abs(x_package_end - x_end) # Fitness if Carrier environment and package dropped
+
+            return result
 
         # Evaluate inherited theta before any learning
         if init_mean is not None:
