@@ -2,8 +2,7 @@
 
 import numpy as np
 
-from examples.d_social_learning.evogym_body_descriptors import relative_activity, size, compactness, elongation, \
-    symmetry
+from evogym_body_descriptors import relative_activity, size, compactness, elongation, symmetry
 
 
 def voxel_descriptor(body: np.ndarray) -> np.ndarray:

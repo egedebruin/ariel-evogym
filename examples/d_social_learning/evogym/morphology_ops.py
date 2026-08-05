@@ -11,11 +11,14 @@ from __future__ import annotations
 import random
 
 import numpy as np
+import time
+from evogym import VOXEL_TYPES
 
 ROWS = 5
 COLS = 5
 TYPES = [0, 1, 2, 3, 4]
-ACTUATOR_TYPES = {3, 4}
+BODY_TYPES = [1, 2, 3, 4]
+ACTUATOR_TYPES = [3, 4]
 MIN_ACTUATORS = 1
 MAX_RETRIES = 200
 
@@ -23,15 +26,24 @@ MAX_RETRIES = 200
 def random_body(rng: random.Random | None = None) -> np.ndarray:
     """Return a random valid 5×5 voxel body (dtype int)."""
     rng = rng or random
-    for _ in range(MAX_RETRIES):
-        body = np.array(
-            [rng.choice(TYPES) for _ in range(ROWS * COLS)], dtype=int
-        ).reshape(ROWS, COLS)
-        if _is_valid(body):
-            return body
-    # fallback: minimal valid body (single actuator)
-    body = np.zeros((ROWS, COLS), dtype=int)
-    body[2, 2] = 3
+    body = np.full((5, 5), 0.0)
+
+    body[rng.randint(0, 4)][rng.randint(0, 4)] = rng.choice(ACTUATOR_TYPES)
+    for i in range(rng.randint(10, 20)):
+        success = False
+        while not success:
+            new_grid = np.copy(body)
+            x = rng.randint(0, 4)
+            y = rng.randint(0, 4)
+            if new_grid[x][y] != 0.0:
+                continue
+
+            new_grid[x][y] = float(rng.choice(BODY_TYPES))
+            if not _is_valid(new_grid):
+                continue
+
+            body = new_grid
+            success = True
     return body
 
 

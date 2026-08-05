@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from evogym import EvoViewer
+
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -41,7 +43,7 @@ import numpy as np
 ENV_NAME = "Walker-v0"
 # ENV_NAME = "UpStepper-v0"
 # ENV_NAME = "Carrier-v0"
-N_STEPS = 500
+N_STEPS = 499
 N_NEIGHBORS = 8  # EvoGym Moore neighbourhood
 
 
@@ -127,7 +129,7 @@ def evaluate_individual(args: tuple) -> dict:
         learner = CMAESLearner(
             n_params=brain.n_params,
             init_mean=init_mean,
-            sigma=0.5,
+            sigma=1,
             pop_size=pop_size,
         )
 

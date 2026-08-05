@@ -28,6 +28,14 @@ for _p in [str(_THIS_DIR), str(_CORE_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+)
+
 import numpy as np
 
 from db import Individual, Population, SimpleEA
@@ -37,6 +45,7 @@ from evaluator import evaluate_individual
 from fitness import combined_fitness
 from inheritance import SCHEMES
 from novelty import compute_novelty
+from evogym import EvoSim
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +181,8 @@ def make_step_fn(
 
 
 def main() -> None:
+    EvoSim._has_displayed_version = True
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--scheme", required=True, choices=list(SCHEMES.keys()))
     parser.add_argument("--x", type=float, required=True)
