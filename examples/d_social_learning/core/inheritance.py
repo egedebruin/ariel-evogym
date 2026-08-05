@@ -24,8 +24,7 @@ def darwinian(
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    return np.zeros(n_params, dtype=np.float64), []
-
+    return np.random.uniform(-1.0, 1.0, size=n_params).astype(np.float64), []
 
 def lamarckian(
     pop_state: list[dict],
