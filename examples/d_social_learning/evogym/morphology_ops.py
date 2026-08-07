@@ -11,8 +11,6 @@ from __future__ import annotations
 import random
 
 import numpy as np
-import time
-from evogym import VOXEL_TYPES
 
 ROWS = 5
 COLS = 5
@@ -56,7 +54,7 @@ def mutate_body(body: np.ndarray, rng: random.Random | None = None) -> np.ndarra
     original = body.copy()
     for _ in range(MAX_RETRIES):
         candidate = original.copy()
-        n_mutations = rng.randint(1, max(1, (ROWS * COLS) // 5))
+        n_mutations = rng.randint(0, max(1, (ROWS * COLS) // 5))
         positions = [(r, c) for r in range(ROWS) for c in range(COLS)]
         chosen = rng.sample(positions, min(n_mutations, len(positions)))
         for r, c in chosen:

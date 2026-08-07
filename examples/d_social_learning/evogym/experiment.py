@@ -37,10 +37,12 @@ warnings.filterwarnings(
 )
 
 import numpy as np
+import random as _random
 
 from db import Individual, Population, SimpleEA
 from descriptor import voxel_descriptor
 from morphology_ops import body_from_list, body_to_list, mutate_body, random_body
+from evogym_body_descriptors import aligned_hamming_distance
 from evaluator import evaluate_individual
 from fitness import combined_fitness
 from inheritance import SCHEMES
@@ -66,6 +68,8 @@ def _pop_state(individuals: list[Individual]) -> list[dict]:
             "theta": np.array(theta, dtype=np.float64) if theta else None,
             "fitness": fitness,
             "db_id": ind.id,
+            "body": ind.genotype_['body'],
+            "similarity_function": aligned_hamming_distance
         })
     return states
 
@@ -111,16 +115,17 @@ def make_step_fn(
             parents = [ind for ind in population if ind.alive]
 
         offspring_list = []
-        import random as _random
-        parent_pool = list(parents)
-        for i in range(lam):
-            if i % len(parent_pool) == 0:
-                _random.shuffle(parent_pool)
-            parent = parent_pool[i % len(parent_pool)]
-            child_body = mutate_body(body_from_list(parent.genotype_["body"]))
-            child = Individual()
-            child.genotype = {"body": body_to_list(child_body), "brain": []}
-            offspring_list.append(child)
+
+        if current_gen > 1:
+            parent_pool = list(parents)
+            for i in range(lam):
+                if i % len(parent_pool) == 0:
+                    _random.shuffle(parent_pool)
+                parent = parent_pool[i % len(parent_pool)]
+                child_body = mutate_body(body_from_list(parent.genotype_["body"]))
+                child = Individual()
+                child.genotype = {"body": body_to_list(child_body), "brain": []}
+                offspring_list.append(child)
 
         all_alive = parents + offspring_list
 
@@ -129,7 +134,10 @@ def make_step_fn(
         all_state = _pop_state(all_alive)
 
         worker_args = []
+        evaluated = []
         for i, ind in enumerate(all_alive):
+            if not ind.requires_eval:
+                continue
             init_mean_arr, donor_ids = scheme_fn(all_state, i, n_params)
             worker_args.append((
                 ind.genotype_["body"],
@@ -138,6 +146,7 @@ def make_step_fn(
                 inner_gens,
                 inner_pop,
             ))
+            evaluated.append(ind)
 
         if num_workers > 1:
             with Pool(processes=num_workers) as pool:
@@ -145,24 +154,26 @@ def make_step_fn(
         else:
             results = [evaluate_individual(a) for a in worker_args]
 
-        for i, ind in enumerate(all_alive):
+        for i, ind in enumerate(evaluated):
             r = results[i]
             distance = r["distance"]
             theta_list = r["best_theta"]
-            novelty = float(novelties[i])
-            desc = descs[i]
-            fitness = combined_fitness(distance, novelty, x_val)
-            ind.fitness = fitness
             ind.tags = {
                 "distance": distance,
-                "novelty": novelty,
-                "descriptor": desc.tolist(),
                 "theta": theta_list,
                 "init_fitness": r["init_fitness"],
                 "learning_curve": r["learning_curve"],
                 "donor_ids": r["donor_ids"],
             }
             ind.genotype_ = {"body": ind.genotype_["body"], "brain": theta_list}
+
+        for i, ind in enumerate(all_alive):
+            novelty = float(novelties[i])
+            desc = descs[i]
+            fitness = combined_fitness(ind.tags["distance"], novelty, x_val)
+            ind.fitness = fitness
+            ind.tags["novelty"] = novelty
+            ind.tags["descriptor"] = desc.tolist()
 
         combined = Population(all_alive)
         survivors = combined.best(n=mu).to_list()
