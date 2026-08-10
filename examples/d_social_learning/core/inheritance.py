@@ -33,8 +33,8 @@ def lamarckian(
 ) -> tuple[np.ndarray, list[int]]:
     theta = pop_state[idx]["theta"]
     db_id = pop_state[idx].get("db_id")
-    if theta is None:
-        return np.zeros(n_params, dtype=np.float64), []
+    if not theta:
+        return darwinian(pop_state, idx, n_params)
     donor_ids = [db_id] if db_id is not None else []
     return np.asarray(theta, dtype=np.float64), donor_ids
 
@@ -46,7 +46,7 @@ def random_scheme(
 ) -> tuple[np.ndarray, list[int]]:
     candidates = [i for i, s in enumerate(pop_state) if s["theta"] is not None]
     if not candidates:
-        return np.zeros(n_params, dtype=np.float64), []
+        return darwinian(pop_state, idx, n_params)
     chosen = random.choice(candidates)
     db_id = pop_state[chosen].get("db_id")
     donor_ids = [db_id] if db_id is not None else []
@@ -60,7 +60,7 @@ def random_many(
 ) -> tuple[np.ndarray, list[int]]:
     candidates = [i for i, s in enumerate(pop_state) if s["theta"] is not None]
     if not candidates:
-        return np.zeros(n_params, dtype=np.float64), []
+        return darwinian(pop_state, idx, n_params)
     k = min(K_INHERIT, len(candidates))
     chosen = random.sample(candidates, k)
     thetas = np.array([pop_state[i]["theta"] for i in chosen], dtype=np.float64)
@@ -75,7 +75,7 @@ def best(
 ) -> tuple[np.ndarray, list[int]]:
     evaluated = [(i, s) for i, s in enumerate(pop_state) if s["theta"] is not None and s["fitness"] is not None]
     if not evaluated:
-        return np.zeros(n_params, dtype=np.float64), []
+        return darwinian(pop_state, idx, n_params)
     best_i, best_s = max(evaluated, key=lambda t: t[1]["fitness"])
     db_id = best_s.get("db_id")
     donor_ids = [db_id] if db_id is not None else []
@@ -89,14 +89,14 @@ def best_many(
 ) -> tuple[np.ndarray, list[int]]:
     evaluated = [(i, s) for i, s in enumerate(pop_state) if s["theta"] is not None and s["fitness"] is not None]
     if not evaluated:
-        return np.zeros(n_params, dtype=np.float64), []
+        return darwinian(pop_state, idx, n_params)
     top = sorted(evaluated, key=lambda t: t[1]["fitness"], reverse=True)[:K_INHERIT]
     thetas = np.array([s["theta"] for _, s in top], dtype=np.float64)
     donor_ids = [s.get("db_id") for _, s in top if s.get("db_id") is not None]
     return thetas.mean(axis=0), donor_ids
 
 
-def similar(
+def novelty(
     pop_state: list[dict],
     idx: int,
     n_params: int,
@@ -107,10 +107,51 @@ def similar(
         if i != idx and s["theta"] is not None
     ]
     if not candidates:
-        return np.zeros(n_params, dtype=np.float64), []
+        return darwinian(pop_state, idx, n_params)
     nearest_i, nearest_s = min(
         candidates,
         key=lambda t: np.linalg.norm(np.asarray(t[1]["descriptor"], dtype=np.float64) - target_desc),
+    )
+    db_id = nearest_s.get("db_id")
+    donor_ids = [db_id] if db_id is not None else []
+    return np.asarray(nearest_s["theta"], dtype=np.float64), donor_ids
+
+
+def novelty_many(
+    pop_state: list[dict],
+    idx: int,
+    n_params: int,
+) -> tuple[np.ndarray, list[int]]:
+    target_desc = np.asarray(pop_state[idx]["descriptor"], dtype=np.float64)
+    candidates = [
+        (i, s) for i, s in enumerate(pop_state)
+        if i != idx and s["theta"] is not None
+    ]
+    if not candidates:
+        return darwinian(pop_state, idx, n_params)
+    candidates.sort(key=lambda t: np.linalg.norm(np.asarray(t[1]["descriptor"], dtype=np.float64) - target_desc))
+    top = candidates[:K_INHERIT]
+    thetas = np.array([s["theta"] for _, s in top], dtype=np.float64)
+    donor_ids = [s.get("db_id") for _, s in top if s.get("db_id") is not None]
+    return thetas.mean(axis=0), donor_ids
+
+
+def similar(
+    pop_state: list[dict],
+    idx: int,
+    n_params: int,
+) -> tuple[np.ndarray, list[int]]:
+    similarity_function = pop_state[idx]['similarity_function']
+    target_body = np.asarray(pop_state[idx]["body"], dtype=np.float64)
+    candidates = [
+        (i, s) for i, s in enumerate(pop_state)
+        if i != idx and s["theta"] is not None
+    ]
+    if not candidates:
+        return darwinian(pop_state, idx, n_params)
+    nearest_i, nearest_s = min(
+        candidates,
+        key=lambda t: similarity_function(np.asarray(t[1]["body"], dtype=np.float64), target_body),
     )
     db_id = nearest_s.get("db_id")
     donor_ids = [db_id] if db_id is not None else []
@@ -122,14 +163,16 @@ def similar_many(
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    target_desc = np.asarray(pop_state[idx]["descriptor"], dtype=np.float64)
+    similarity_function = pop_state[idx]['similarity_function']
+    target_body = np.asarray(pop_state[idx]["body"], dtype=np.float64)
     candidates = [
         (i, s) for i, s in enumerate(pop_state)
         if i != idx and s["theta"] is not None
     ]
     if not candidates:
-        return np.zeros(n_params, dtype=np.float64), []
-    candidates.sort(key=lambda t: np.linalg.norm(np.asarray(t[1]["descriptor"], dtype=np.float64) - target_desc))
+        return darwinian(pop_state, idx, n_params)
+
+    candidates.sort(key=lambda t: similarity_function(np.asarray(t[1]["body"], dtype=np.float64), target_body))
     top = candidates[:K_INHERIT]
     thetas = np.array([s["theta"] for _, s in top], dtype=np.float64)
     donor_ids = [s.get("db_id") for _, s in top if s.get("db_id") is not None]
@@ -143,6 +186,8 @@ SCHEMES = {
     "random_many": random_many,
     "best": best,
     "best_many": best_many,
+    "novelty": novelty,
+    "novelty_many": novelty_many,
     "similar": similar,
     "similar_many": similar_many,
 }

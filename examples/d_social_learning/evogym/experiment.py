@@ -117,11 +117,11 @@ def make_step_fn(
         offspring_list = []
 
         if current_gen > 1:
-            parent_pool = list(parents)
-            for i in range(lam):
-                if i % len(parent_pool) == 0:
-                    _random.shuffle(parent_pool)
-                parent = parent_pool[i % len(parent_pool)]
+            for _ in range(lam):
+                # Tournament selection (size 4)
+                tournament = _random.sample(parents, min(4, len(parents)))
+                parent = max(tournament, key=lambda ind: ind.fitness)
+
                 child_body = mutate_body(body_from_list(parent.genotype_["body"]))
                 child = Individual()
                 child.genotype = {"body": body_to_list(child_body), "brain": []}
@@ -175,11 +175,14 @@ def make_step_fn(
             ind.tags["novelty"] = novelty
             ind.tags["descriptor"] = desc.tolist()
 
-        combined = Population(all_alive)
-        survivors = combined.best(n=mu).to_list()
-        survivor_ids = {id(s) for s in survivors}
-        for ind in all_alive:
-            ind.alive = id(ind) in survivor_ids
+        if current_gen > 1:
+            offspring_ids = {id(o) for o in offspring_list}
+            for ind in all_alive:
+                ind.alive = id(ind) in offspring_ids
+        else:
+            # For the first generation, keep everyone alive who was just evaluated
+            for ind in all_alive:
+                ind.alive = True
 
         return Population(all_alive)
 
