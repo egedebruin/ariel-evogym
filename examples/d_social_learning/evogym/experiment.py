@@ -62,7 +62,7 @@ def _pop_state(individuals: list[Individual]) -> list[dict]:
         fitness = ind.fitness_ if not ind.requires_eval else None
         descriptor = ind.tags_.get("descriptor") if ind.tags_ else None
         if descriptor is None:
-            descriptor = [0.0] * 8
+            descriptor = [0.0] * 5
         states.append({
             "descriptor": np.array(descriptor, dtype=np.float64),
             "theta": np.array(theta, dtype=np.float64) if theta else None,
