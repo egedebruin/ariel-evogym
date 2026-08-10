@@ -63,11 +63,13 @@ def _pop_state(individuals: list[Individual]) -> list[dict]:
         descriptor = ind.tags_.get("descriptor") if ind.tags_ else None
         if descriptor is None:
             descriptor = [0.0] * 5
+        parent_id = ind.tags_.get("parent_id") if ind.tags_ else None
         states.append({
             "descriptor": np.array(descriptor, dtype=np.float64),
             "theta": np.array(theta, dtype=np.float64) if theta else None,
             "fitness": fitness,
             "db_id": ind.id,
+            "parent_id": parent_id,
             "body": ind.genotype_['body'],
             "similarity_function": aligned_hamming_distance
         })
@@ -124,6 +126,7 @@ def make_step_fn(
 
                 child_body = mutate_body(body_from_list(parent.genotype_["body"]))
                 child = Individual()
+                child.tags = {"parent_id": parent.id}
                 child.genotype = {"body": body_to_list(child_body), "brain": []}
                 offspring_list.append(child)
 

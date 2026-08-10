@@ -31,12 +31,14 @@ def lamarckian(
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    theta = pop_state[idx]["theta"]
-    db_id = pop_state[idx].get("db_id")
-    if not theta:
-        return darwinian(pop_state, idx, n_params)
-    donor_ids = [db_id] if db_id is not None else []
-    return np.asarray(theta, dtype=np.float64), donor_ids
+    parent_id = pop_state[idx].get("parent_id")
+    if parent_id is not None:
+        parent_state = next((s for s in pop_state if s.get("db_id") == parent_id), None)
+        if parent_state and parent_state["theta"] is not None:
+            donor_ids = [parent_id]
+            return np.asarray(parent_state["theta"], dtype=np.float64), donor_ids
+
+    return darwinian(pop_state, idx, n_params)
 
 
 def random_scheme(
