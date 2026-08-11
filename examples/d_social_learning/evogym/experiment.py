@@ -120,8 +120,8 @@ def make_step_fn(
 
         if current_gen > 1:
             for _ in range(lam):
-                # Tournament selection (size 4)
-                tournament = _random.sample(parents, min(4, len(parents)))
+                # Tournament selection (size 2)
+                tournament = _random.sample(parents, min(2, len(parents)))
                 parent = max(tournament, key=lambda ind: ind.fitness)
 
                 child_body = mutate_body(body_from_list(parent.genotype_["body"]))
@@ -179,9 +179,11 @@ def make_step_fn(
             ind.tags["descriptor"] = desc.tolist()
 
         if current_gen > 1:
-            offspring_ids = {id(o) for o in offspring_list}
+            combined = Population(all_alive)
+            survivors = combined.best(n=mu).to_list()
+            survivor_ids = {id(s) for s in survivors}
             for ind in all_alive:
-                ind.alive = id(ind) in offspring_ids
+                ind.alive = id(ind) in survivor_ids
         else:
             # For the first generation, keep everyone alive who was just evaluated
             for ind in all_alive:
