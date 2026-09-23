@@ -31,21 +31,27 @@ for _p in [str(_THIS_DIR), str(_SRC_DIR)]:
         sys.path.insert(0, _p)
 import numpy as np
 import evogym.envs
-from evogym import EvoSim
+from evogym import EvoSim, EvoWorld, utils
 
 ENV_NAME = "Walker-v0"
 # ENV_NAME = "UpStepper-v0"
 # ENV_NAME = "Carrier-v0"
 N_STEPS = 499
 
+_WORLD_JSON = Path(__file__).parent / "world_data" / "walker_long.json"
+
 def initialize_world(genome):
     EvoSim._has_displayed_version = True
-    import gymnasium as gym
+    from envs import WalkerLongEnv
     import evogym_adapter as adapter
     body_to_adjacency = adapter.body_to_adjacency
     body = np.array(genome, dtype=int)
 
-    env = gym.make(ENV_NAME, body=body)
+    world = EvoWorld.from_json(str(_WORLD_JSON))
+    world.add_from_array("robot", body, 1, 1, connections=utils.get_full_connectivity(body))
+
+    # env = WalkerLongEnv(world, render_mode="screen")
+    env = WalkerLongEnv(world)
     sim = env.unwrapped  # access evogym methods bypassing gymnasium wrappers
     adjacency = body_to_adjacency(body)
 
