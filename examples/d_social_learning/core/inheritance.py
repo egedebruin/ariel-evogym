@@ -98,7 +98,7 @@ def best_many(
     return thetas.mean(axis=0), donor_ids
 
 
-def similar_MD(
+def similar_DESCR(
     pop_state: list[dict],
     idx: int,
     n_params: int,
@@ -120,12 +120,12 @@ def similar_MD(
     return np.asarray(nearest_s["theta"], dtype=np.float64), donor_ids
 
 
-def similar_many_MD(
+def similar_many_DESCR(
     pop_state: list[dict],
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    """Like ``similar_MD``, averaged over the K_INHERIT nearest donors."""
+    """Like ``similar_DESCR``, averaged over the K_INHERIT nearest donors."""
     target_desc = np.asarray(pop_state[idx]["descriptor"], dtype=np.float64)
     candidates = [
         (i, s) for i, s in enumerate(pop_state)
@@ -140,7 +140,7 @@ def similar_many_MD(
     return thetas.mean(axis=0), donor_ids
 
 
-def similar_TED(
+def similar_STRUCT(
     pop_state: list[dict],
     idx: int,
     n_params: int,
@@ -167,12 +167,12 @@ def similar_TED(
     return np.asarray(nearest_s["theta"], dtype=np.float64), donor_ids
 
 
-def similar_many_TED(
+def similar_many_STRUCT(
     pop_state: list[dict],
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    """Like ``similar_TED``, averaged over the K_INHERIT nearest donors."""
+    """Like ``similar_STRUCT``, averaged over the K_INHERIT nearest donors."""
     similarity_function = pop_state[idx]['similarity_function']
     target_morphology = pop_state[idx]["morphology"]
     candidates = [
@@ -196,8 +196,8 @@ SCHEMES = {
     "random_many": random_many,
     "best": best,
     "best_many": best_many,
-    "similar_MD": similar_MD,
-    "similar_many_MD": similar_many_MD,
-    "similar_TED": similar_TED,
-    "similar_many_TED": similar_many_TED,
+    "similar_DESCR": similar_DESCR,
+    "similar_many_DESCR": similar_many_DESCR,
+    "similar_STRUCT": similar_STRUCT,
+    "similar_many_STRUCT": similar_many_STRUCT,
 }

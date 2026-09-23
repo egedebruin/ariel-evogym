@@ -25,8 +25,8 @@ for _p in [str(_EVOGYM_DIR)]:
 
 SCHEMES = [
     "darwinian", "lamarckian", "random", "random_many",
-    "best", "best_many", "similar_MD", "similar_many_MD",
-    "similar_TED", "similar_many_TED",
+    "best", "best_many", "similar_DESCR", "similar_many_DESCR",
+    "similar_STRUCT", "similar_many_STRUCT",
 ]
 X_VALUES = [0.0, 0.5, 1.0]
 DOMAINS = ["ariel", "evogym"]
@@ -40,7 +40,7 @@ def _load_archive(db_path: Path, domain: str):
     if domain == "ariel":
         from ariel.ec.archive import Archive
     else:
-        from db import Archive
+        from sim_evogym.db import Archive
     return Archive(db_path)
 
 
@@ -96,7 +96,7 @@ def main() -> None:
         for scheme in SCHEMES:
             for x in X_VALUES:
                 for rep in range(args.reps):
-                    db_path = data_dir / domain / scheme / f"x{_x_str(x)}" / f"rep_{rep}" / "database.db"
+                    db_path = data_dir / domain / scheme / f"x{_x_str(x)}" / f"rep_{rep}_novSTRUCT" / "database.db"
                     if not db_path.exists():
                         continue
                     print(f"  {domain}/{scheme}/x{x}/rep{rep}")

@@ -6,10 +6,10 @@ SIMULATOR_EVOGYM = "evogym"
 def get_descriptor(ind):
     if simulator == SIMULATOR_ARIEL:
         from sim_ariel.descriptor import tree_descriptor
-        return tree_descriptor(ind.genotype_["morph"])
+        return tree_descriptor(ind)
     elif simulator == SIMULATOR_EVOGYM:
         from sim_evogym.descriptor import voxel_descriptor
-        return voxel_descriptor(ind.genotype_["morph"])
+        return voxel_descriptor(ind)
     else:
         return None
 

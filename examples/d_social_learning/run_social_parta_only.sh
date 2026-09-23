@@ -43,7 +43,7 @@ cd "$REPO_ROOT"
 # Map array index -> (scheme, x, rep)
 # ---------------------------------------------------------------------------
 
-SCHEMES=(darwinian lamarckian random random_many best best_many similar_MD similar_many_MD similar_TED similar_many_TED)
+SCHEMES=(darwinian lamarckian random random_many best best_many similar_DESCR similar_many_DESCR similar_STRUCT similar_many_STRUCT)
 X_VALUES=(0 0.5 1)
 N_REPS=5
 
@@ -89,11 +89,12 @@ else
     SELECTION_FLAG=()
 fi
 
-# Distance metric used for the fitness-blend novelty term: MD = Euclidean
-# distance on the morphological-descriptor vector, TED = tree edit distance
-# (default here). Applies uniformly to every task in this submission (not
-# swept per array index) -- flip back to MD and resubmit for an MD sweep.
-NOVELTY_METRIC=TED
+# Distance metric used for the fitness-blend novelty term: DESCR = Euclidean
+# distance on the morphological-descriptor vector, STRUCT = tree edit distance
+# for ariel and hamming distance for evogym. Applies uniformly to every task
+# in this submission (not swept per array index) -- flip back to DESCR and
+# resubmit for an DESCR sweep.
+NOVELTY_METRIC=STRUCT
 
 echo "Scheme: $SCHEME  x=$X  rep=$REP  (array idx=$IDX)"
 echo "Params: gens=$GENS pop=$POP lam=$LAM inner-gens=$INNER_GENS inner-pop=$INNER_POP sigma=$SIGMA hidden=$HIDDEN workers=$WORKERS comma_selection=$COMMA_SELECTION novelty_metric=$NOVELTY_METRIC"

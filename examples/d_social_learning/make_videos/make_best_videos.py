@@ -50,8 +50,8 @@ JERK_THRESHOLD = 0.15
 
 SCHEMES = [
     "darwinian", "lamarckian", "random", "random_many",
-    "best", "best_many", "similar_MD", "similar_many_MD",
-    "similar_TED", "similar_many_TED",
+    "best", "best_many", "similar_DESCR", "similar_many_DESCR",
+    "similar_STRUCT", "similar_many_STRUCT",
 ]
 
 

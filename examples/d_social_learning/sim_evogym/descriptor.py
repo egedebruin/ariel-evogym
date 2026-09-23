@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from evogym_body_descriptors import relative_activity, size, compactness, elongation, symmetry
-from morphology_ops import body_from_list
+from sim_evogym.evogym_body_descriptors import relative_activity, size, compactness, elongation, symmetry
+from sim_evogym.morphology_ops import body_from_list
 
 
 def voxel_descriptor(genome) -> np.ndarray:
