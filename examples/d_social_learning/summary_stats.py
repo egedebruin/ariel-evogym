@@ -30,6 +30,7 @@ SCHEMES = [
 ]
 X_VALUES = [0.0, 0.5, 1.0]
 DOMAINS = ["ariel", "evogym"]
+NOVELTY = 'STRUCT'
 
 
 def _x_str(x: float) -> str:
@@ -96,7 +97,7 @@ def main() -> None:
         for scheme in SCHEMES:
             for x in X_VALUES:
                 for rep in range(args.reps):
-                    db_path = data_dir / domain / scheme / f"x{_x_str(x)}" / f"rep_{rep}_novSTRUCT" / "database.db"
+                    db_path = data_dir / domain / scheme / f"x{_x_str(x)}" / f"rep_{rep}_nov{NOVELTY}" / "database.db"
                     if not db_path.exists():
                         continue
                     print(f"  {domain}/{scheme}/x{x}/rep{rep}")
