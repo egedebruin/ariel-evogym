@@ -1,17 +1,18 @@
 """ARIEL social-learning experiment: (mu+lambda) morphology EA + CMA-ES brain learning.
 
 Usage:
-    uv run examples/d_social_learning/ariel/experiment.py \
+    uv run examples/d_social_learning/experiment.py \
         --scheme lamarckian --x 0.5 --rep 0 [--gens 100] [--pop 20] [--lam 100] \
         [--inner-gens 20] [--inner-pop 16] [--sigma 0.5] [--hidden 32] [--workers N] \
-        [--comma-selection] [--selection elitist|tournament] [--tournament-size 4]
+        [--comma-selection] [--selection elitist|tournament] [--tournament-size 4] \
+        [--novelty-metric MD|TED]
 
 Each invocation without --resume-dir creates a fresh, timestamped output
 directory (__data__/social/ariel/{scheme}/x{x}/rep_{rep}_{timestamp}) so
 re-running the same scheme/x/rep never clobbers a previous run, and prints
 that directory as `RUN_DIR=<path>` on its own stdout line. To continue a run,
 pass that exact directory back in:
-    uv run examples/d_social_learning/ariel/experiment.py \
+    uv run examples/d_social_learning/experiment.py \
         --scheme lamarckian --x 0.5 --rep 0 --gens 20 \
         --resume-dir __data__/social/ariel/lamarckian/x05/rep_0_20260813_143022
 """
@@ -33,15 +34,11 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 
-# Add local module dirs to sys.path WITHOUT adding d_social_learning/ itself,
-# because that directory contains an ariel/ subdirectory that would shadow the
-# installed ariel package.
-_THIS_DIR = Path(__file__).parent          # d_social_learning/ariel/
-_SOCIAL_DIR = _THIS_DIR.parent             # d_social_learning/
-_CORE_DIR = _SOCIAL_DIR / "core"
-for _p in [str(_THIS_DIR), str(_CORE_DIR)]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Add this dir to sys.path so local modules (evaluate, core.*,
+# simulator_dependent_functions) resolve.
+_THIS_DIR = Path(__file__).parent          # d_social_learning/
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
 
 import numpy as np
 from rich.console import Console
@@ -53,7 +50,7 @@ from evaluate import evaluate_individual
 
 from core.fitness import combined_fitness
 from core.inheritance import SCHEMES
-from core.novelty import compute_novelty
+from core.novelty import compute_novelty, compute_novelty_ted
 
 console = Console()
 
@@ -199,6 +196,7 @@ def build_ops(
     comma_selection: bool = False,
     selection_method: str = "elitist",
     tournament_size: int = 4,
+    novelty_metric: str = "MD",
 ) -> list[EAOperation]:
     """Return the ordered list of EAOperation steps for the outer EA."""
     @EAOperation
@@ -234,7 +232,12 @@ def build_ops(
         all_alive = parents + offspring
 
         descs = _compute_descriptors(all_alive)
-        novelties = compute_novelty(descs)
+        if novelty_metric == "TED":
+            dist_fn = simulator_dependent_functions.similarity_function()
+            morphs = [ind.genotype_["morph"] for ind in all_alive]
+            novelties = compute_novelty_ted(morphs, dist_fn)
+        else:
+            novelties = compute_novelty(descs)
 
         all_state = _pop_state(all_alive)
         scheme_fn = SCHEMES[scheme_name]
@@ -398,6 +401,12 @@ def main() -> None:
              "timestamped directory is created instead.",
     )
     parser.add_argument("--platform", type=str, choices=["ariel", "evogym"], default="ariel")
+    parser.add_argument(
+        "--novelty-metric", choices=["MD", "TED"], default="MD",
+        help="Distance metric used for the fitness-blend novelty term (core/fitness.py's "
+             "combined_fitness): MD = Euclidean distance on the morphological-descriptor "
+             "vector (default), TED = tree edit distance (--platform ariel only).",
+    )
     args = parser.parse_args()
 
     if args.comma_selection and args.lam < args.pop:
@@ -405,6 +414,9 @@ def main() -> None:
 
     if args.selection == "tournament" and args.tournament_size < 2:
         parser.error("--tournament-size must be >= 2 when --selection=tournament")
+
+    if args.novelty_metric == "TED" and args.platform != "ariel":
+        parser.error("--novelty-metric TED requires --platform ariel")
 
     simulator_dependent_functions.simulator = args.platform
 
@@ -417,11 +429,12 @@ def main() -> None:
     else:
         x_str = str(args.x).replace(".", "")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Non-default selection schemes get a label in the rep-dir name so
-        # runs of different schemes for the same (scheme, x, rep) don't get
-        # silently mixed together by analysis/curve_utils.py's discover_reps
-        # (which globs "rep_*/database.db"). The true default (mu+lambda,
-        # elitist) keeps the original unlabeled name so every other run
+        # Non-default selection schemes and novelty metric get a label in the
+        # rep-dir name so runs of different variants for the same
+        # (scheme, x, rep) don't get silently mixed together by
+        # analysis/curve_utils.py's discover_reps (which globs
+        # "rep_*/database.db"). The true default (mu+lambda, elitist, MD
+        # novelty) keeps the original unlabeled name so every other run
         # script's output layout is unaffected.
         sel_bits = []
         if args.comma_selection:
@@ -429,8 +442,9 @@ def main() -> None:
         if args.selection == "tournament":
             sel_bits.append(f"tourn{args.tournament_size}")
         sel_suffix = ("_" + "_".join(sel_bits)) if sel_bits else ""
+        novelty_suffix = "_novTED" if args.novelty_metric == "TED" else ""
         out_dir = Path(
-            f"__data__/social/{args.platform}/{args.scheme}/x{x_str}/rep_{args.rep}"
+            f"__data__/social/{args.platform}/{args.scheme}/x{x_str}/rep_{args.rep}{sel_suffix}{novelty_suffix}"
         )
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -455,6 +469,7 @@ def main() -> None:
         comma_selection=args.comma_selection,
         selection_method=args.selection,
         tournament_size=args.tournament_size,
+        novelty_metric=args.novelty_metric,
     )
 
     if args.resume_dir:

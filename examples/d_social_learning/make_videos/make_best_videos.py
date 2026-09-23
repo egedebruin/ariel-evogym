@@ -45,12 +45,13 @@ CTRL_ALPHA = 0.5
 N_NEIGHBORS = 6
 FEATURES_PER_NODE = 8
 HEIGHT_PENALTY_THRESHOLD = 0.5
-JERK_PENALTY_WEIGHT = 2.0
+JERK_PENALTY_WEIGHT = 3.0
 JERK_THRESHOLD = 0.15
 
 SCHEMES = [
     "darwinian", "lamarckian", "random", "random_many",
-    "best", "best_many", "similar", "similar_many",
+    "best", "best_many", "similar_MD", "similar_many_MD",
+    "similar_TED", "similar_many_TED",
 ]
 
 
