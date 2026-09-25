@@ -64,7 +64,7 @@ def _pop_state(individuals: list[Individual]) -> list[dict]:
     states = []
     for ind in individuals:
         theta = ind.tags_.get("theta") if ind.tags_ else None
-        fitness = ind.fitness_ if not ind.requires_eval else None
+        distance = ind.tags_.get("distance") if not ind.tags_ else None
         descriptor = ind.tags_.get("descriptor") if ind.tags_ else None
         if descriptor is None:
             descriptor = [0.0] * simulator_dependent_functions.n_descriptors()
@@ -72,7 +72,7 @@ def _pop_state(individuals: list[Individual]) -> list[dict]:
         states.append({
             "descriptor": np.array(descriptor, dtype=np.float64),
             "theta": np.array(theta, dtype=np.float64) if theta else None,
-            "fitness": fitness,
+            "distance": distance,
             "db_id": ind.id,
             "parent_id": parent_id,
             "morphology": ind.genotype["morph"],

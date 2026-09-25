@@ -75,10 +75,10 @@ def best(
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    evaluated = [(i, s) for i, s in enumerate(pop_state) if s["theta"] is not None and s["fitness"] is not None]
+    evaluated = [(i, s) for i, s in enumerate(pop_state) if s["theta"] is not None and s["distance"] is not None]
     if not evaluated:
         return darwinian(pop_state, idx, n_params)
-    best_i, best_s = max(evaluated, key=lambda t: t[1]["fitness"])
+    best_i, best_s = max(evaluated, key=lambda t: t[1]["distance"])
     db_id = best_s.get("db_id")
     donor_ids = [db_id] if db_id is not None else []
     return np.asarray(best_s["theta"], dtype=np.float64), donor_ids
@@ -89,10 +89,10 @@ def best_many(
     idx: int,
     n_params: int,
 ) -> tuple[np.ndarray, list[int]]:
-    evaluated = [(i, s) for i, s in enumerate(pop_state) if s["theta"] is not None and s["fitness"] is not None]
+    evaluated = [(i, s) for i, s in enumerate(pop_state) if s["theta"] is not None and s["distance"] is not None]
     if not evaluated:
         return darwinian(pop_state, idx, n_params)
-    top = sorted(evaluated, key=lambda t: t[1]["fitness"], reverse=True)[:K_INHERIT]
+    top = sorted(evaluated, key=lambda t: t[1]["distance"], reverse=True)[:K_INHERIT]
     thetas = np.array([s["theta"] for _, s in top], dtype=np.float64)
     donor_ids = [s.get("db_id") for _, s in top if s.get("db_id") is not None]
     return thetas.mean(axis=0), donor_ids
