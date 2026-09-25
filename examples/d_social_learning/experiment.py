@@ -265,6 +265,7 @@ def build_ops(
         else:
             results = [evaluate_individual(a) for a in worker_args]
 
+        distances = []
         i_evaluated = 0
         for i, ind in enumerate(all_alive):
             if ind.requires_eval:
@@ -275,16 +276,15 @@ def build_ops(
                 r = ind.tags
                 theta_list = ind.tags["theta"]
             distance = r["distance"]
+            distances.append(distance)
             novelty = float(novelties[i])
             desc = descs[i]
             prior = ind.tags_ or {}
-            computed_fitness = combined_fitness(distance, novelty, x_val)
             # NaN (e.g. a timed-out individual's distance, see
             # _evaluate_with_timeout) doesn't reliably sink to the bottom
             # under Population.best()'s comparison-based sort the way
             # -inf does (see _safe_attr) -- substitute -inf explicitly so
             # a failed individual can never be selected as a survivor.
-            ind.fitness = computed_fitness if np.isfinite(computed_fitness) else float("-inf")
             ind.tags = {
                 "parent_id": prior.get("parent_id"),
                 "distance": distance,
@@ -296,6 +296,15 @@ def build_ops(
                 "donor_ids": r["donor_ids"]
             } | simulator_dependent_functions.extra_tags(r)
             ind.genotype_ = {"morph": ind.genotype_["morph"], "brain": theta_list}
+
+        # Calculate normalized fitness
+        min_dist, max_dist = min(distances), max(distances)
+        min_nov, max_nov = min(novelties), max(novelties)
+        for i, ind in enumerate(all_alive):
+            norm_distance = (distances[i] - min_dist) / (max_dist - min_dist) if max_dist > min_dist else 0.0
+            norm_novelty = (float(novelties[i]) - min_nov) / (max_nov - min_nov) if max_nov > min_nov else 0.0
+            computed_fitness = combined_fitness(norm_distance, norm_novelty, x_val)
+            ind.fitness = computed_fitness if np.isfinite(computed_fitness) else float("-inf")
 
         if comma_selection:
             # (mu,lambda): survivors drawn only from offspring, parents always die.

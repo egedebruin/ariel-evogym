@@ -97,7 +97,7 @@ def _rect_area(corners: list[tuple[float, float]]) -> float:
     a, b, c, _ = corners
     w = math.hypot(b[0] - a[0], b[1] - a[1])
     h = math.hypot(c[0] - a[0], c[1] - a[1])
-    return w * h * 100
+    return w * h
 
 
 def get_node_inputs(
