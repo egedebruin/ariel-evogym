@@ -43,14 +43,14 @@ cd "$REPO_ROOT"
 # Map array index -> (scheme, x, rep)
 # ---------------------------------------------------------------------------
 
-SCHEMES=(darwinian lamarckian random random_many best best_many similar_DESCR similar_many_DESCR similar_STRUCT similar_many_STRUCT)
+SCHEMES=(darwinian lamarckian random random_many best best_many similar_STRUCT similar_many_STRUCT)
 X_VALUES=(0 0.5 1)
 N_REPS=5
 
 IDX=$SLURM_ARRAY_TASK_ID
 
-REP=$(( IDX / 30 ))                 # 10 schemes x 3 x-values = 30 combos per rep
-REM=$(( IDX % 30 ))
+REP=$(( IDX / 24 ))                 # 8 schemes x 3 x-values = 30 combos per rep
+REM=$(( IDX % 24 ))
 SCHEME_IDX=$(( REM / 3 ))
 X_IDX=$(( REM % 3 ))
 
