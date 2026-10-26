@@ -4,7 +4,7 @@
 # Runs controller learning from scratch on the last generation of morphologies.
 #
 # Usage:
-#   sbatch examples/d_social_learning/run_scratch_batch.sh [ariel|evogym|all]
+#   sbatch examples/d_social_learning/run_scratch_batch.sh [ariel|evogym]
 #
 
 #SBATCH --job-name=scratch-learning

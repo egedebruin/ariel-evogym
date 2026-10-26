@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--sigma", type=float, default=0.5)
     parser.add_argument("--hidden", type=int, default=16)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--platform", type=str, choices=["ariel", "evogym", "all"], default="all", help="Filter experiments by platform.")
+    parser.add_argument("--platform", type=str, choices=["ariel", "evogym"], default="ariel", help="Filter experiments by platform.")
     parser.add_argument("--db-path", type=str, default=None, help="Path to a specific database.db file to process.")
     parser.add_argument("--scheme", type=str, default=None, choices=["darwinian", "lamarckian", "random", "random_many", "best", "best_many", "similar_STRUCT", "similar_many_STRUCT"])
     parser.add_argument("--x", type=str, default=None, help="X value as string (e.g. 00, 05, 10)")
@@ -68,7 +68,7 @@ def main():
     elif args.scheme and args.x is not None and args.rep is not None:
         # Calculate path based on parameters
         # Pattern: __data__/social/$PLATFORM/$SCHEME/x$X/k$K/rep_${REP}_novSTRUCT/database.db
-        platform = args.platform if args.platform != "all" else "evogym"
+        platform = args.platform
         base_path = data_root / platform / args.scheme / f"x{args.x}" / f"k{args.k_inherit}"
         
         # Search for database.db within the specific rep directory
@@ -106,7 +106,7 @@ def main():
             # Fallback to first part relative to data_root if 'social' not found
             platform = db_path.relative_to(data_root).parts[0]
         
-        if args.platform != "all" and platform != args.platform:
+        if platform != args.platform:
             continue
 
         console.rule(f"[bold cyan]Processing {db_path} (Platform: {platform})")
