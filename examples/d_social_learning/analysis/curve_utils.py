@@ -1,7 +1,7 @@
 """Shared helpers for aggregating per-generation metrics across replicate runs
 of a social-learning experiment.
 
-Used by plot_run_curves.py, plot_diversity_curves.py, and compare_schemes.py.
+Used by the analysis scripts in this folder.
 """
 
 from __future__ import annotations
@@ -9,18 +9,27 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import sys
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.novelty_history import read_run_history  # noqa: E402
+
 SCHEMES = [
     "darwinian", "lamarckian", "random", "random_many",
     "best", "best_many", "similar_DESCR", "similar_many_DESCR",
     "similar_STRUCT", "similar_many_STRUCT",
+    "similar_TOPDOWN", "similar_many_TOPDOWN",
 ]
 X_VALUES = [0.0, 0.5, 1.0]
+
+# novelty_history metric (core/novelty_history.py) that metric="novelty" and
+# metric="fitness" curves read.
+NOVELTY_METRIC = "TOPDOWN"
 
 # Distinct color per scheme, shared across all plots for consistency.
 SCHEME_COLORS = {
@@ -28,13 +37,34 @@ SCHEME_COLORS = {
         SCHEMES,
         ["#4c72b0", "#dd8452", "#55a868", "#c44e52",
          "#8172b2", "#937860", "#da8bc3", "#8c8c8c",
-         "#ccb974", "#64b5cd"],
+         "#ccb974", "#64b5cd", "#ccb974", "#64b5cd"],
     )
 }
 
 
 def x_str(x: float) -> str:
     return str(x).replace(".", "")
+
+
+# Must match sim_ariel/evaluator.py's values at the time the data was generated.
+JERK_PENALTY_WEIGHT = 3.0
+JERK_THRESHOLD = 0.15
+
+
+def pure_displacement(tags: dict) -> float | None:
+    """Forward displacement with the jerk penalty added back onto the
+    learned (penalised) fitness stored in tags['distance'].
+
+    Only the jerk penalty can be undone: the spawn-height penalty depends on
+    core height, which isn't stored, so it stays included (it's zero unless
+    the core spawns above HEIGHT_PENALTY_THRESHOLD).
+    """
+    distance = tags.get("distance")
+    mean_jerk = tags.get("mean_jerk")
+    if distance is None or mean_jerk is None:
+        return None
+    jerk_penalty = JERK_PENALTY_WEIGHT * mean_jerk if mean_jerk >= JERK_THRESHOLD else 0.0
+    return distance + jerk_penalty
 
 
 def rep_db_parts(rep_dir: Path) -> list[Path]:
@@ -56,14 +86,44 @@ def rep_db_parts(rep_dir: Path) -> list[Path]:
     return [p for p in parts if p.exists()]
 
 
+def read_individuals(db: Path | str, columns: str, where: str = "fitness_ IS NOT NULL") -> "pd.DataFrame":
+    """``SELECT id, <columns> FROM individual WHERE <where>`` over a run's
+    database.db and every database_part*.db continuation (`db` is the run's
+    database.db). A continuation re-stores the restored survivors under their
+    original ids; each individual's row from the newest file wins, as only
+    there are its time_of_death and alive current."""
+    import pandas as pd
+    frames = []
+    for part in rep_db_parts(Path(db).parent):
+        con = sqlite3.connect(f"file:{part}?mode=ro", uri=True)
+        frames.append(pd.read_sql(f"SELECT id, {columns} FROM individual WHERE {where}", con))
+        con.close()
+    return pd.concat(frames, ignore_index=True).drop_duplicates("id", keep="last").reset_index(drop=True)
+
+
+def load_history_by_gen(rep_dir: Path, column: str, metric: str = NOVELTY_METRIC) -> dict[int, list[float]] | None:
+    """{generation: [novelty_history `column` of every selection-pool member]}
+    for one rep (stitched across database_part*.db), or None if the rep has
+    no history for `metric`."""
+    hist = read_run_history(rep_dir, metric)
+    if hist.empty:
+        return None
+    hist = hist[np.isfinite(hist[column].astype(float))]
+    return {int(g): grp[column].astype(float).tolist() for g, grp in hist.groupby("generation")}
+
+
 def load_run(rep_dir: Path, metric: str) -> dict[int, list[float]] | None:
     """Return {generation: [values]} for one rep, stitched across
     database.db and any database_part*.db continuation files, or None if
     missing/empty.
 
-    metric="fitness" reads individual.fitness_; metric="novelty" reads
-    tags_['novelty']. Both are restricted to individuals with fitness_ IS NOT
-    NULL, matching how the outer EA marks an individual as evaluated.
+    metric="fitness"/"novelty" read the novelty_history table for
+    NOVELTY_METRIC: every selection-pool member's value at each generation
+    (individual.fitness_ / tags_['novelty'] only keep each individual's last
+    value, see core/novelty_history.py). metric="displacement" reads
+    pure_displacement(tags_) of the individuals born each generation,
+    restricted to fitness_ IS NOT NULL, matching how the outer EA marks an
+    individual as evaluated.
 
     A resumed run's continuation file re-persists the restored survivor
     population under its original time_of_birth (see rep_db_parts), so
@@ -71,6 +131,9 @@ def load_run(rep_dir: Path, metric: str) -> dict[int, list[float]] | None:
     the highest generation already covered by earlier parts — this drops the
     duplicated restart-generation rows instead of double-counting them.
     """
+    if metric in ("fitness", "novelty"):
+        return load_history_by_gen(rep_dir, metric)
+
     db_parts = rep_db_parts(rep_dir)
     if not db_parts:
         return None
@@ -88,14 +151,10 @@ def load_run(rep_dir: Path, metric: str) -> dict[int, list[float]] | None:
         con.close()
 
         part_max = covered_max
-        for birth, fit, tags in rows:
+        for birth, _fitness, tags in rows:
             if birth <= covered_max:
                 continue
-            if metric == "fitness":
-                value = fit
-            else:
-                tags_d = json.loads(tags) if tags else {}
-                value = tags_d.get("novelty")
+            value = pure_displacement(json.loads(tags) if tags else {})
             if value is not None and np.isfinite(value):
                 by_gen[birth].append(float(value))
             part_max = max(part_max, birth)
@@ -158,10 +217,16 @@ def single_run_curve(
 
 
 def discover_reps(exp_dir: Path, scheme: str, xv: float) -> list[Path]:
+    """Rep dirs for (scheme, x): ``{scheme}/x{x}/rep_*`` (older layout) and
+    ``{scheme}/x{x}/k{k}/rep_*`` (experiment.py's current layout)."""
     base = exp_dir / scheme / f"x{x_str(xv)}"
     if not base.exists():
         return []
-    return sorted(p.parent for p in base.glob("rep_*/database.db"))
+    dbs = [*base.glob("rep_*/database.db"), *base.glob("k*/rep_*/database.db")]
+    k_dirs = {p.parent.parent.name for p in dbs if p.parent.parent != base}
+    if len(k_dirs) > 1:
+        print(f"[curve_utils] warning: {base} mixes reps from {sorted(k_dirs)}")
+    return sorted(p.parent for p in dbs)
 
 
 @lru_cache(maxsize=None)

@@ -5,24 +5,41 @@ Usage:
         --scheme lamarckian --x 0.5 --rep 0 [--gens 100] [--pop 20] [--lam 100] \
         [--inner-gens 20] [--inner-pop 16] [--sigma 0.5] [--hidden 32] [--workers N] \
         [--comma-selection] [--selection elitist|tournament] [--tournament-size 4] \
-        [--novelty-metric DESCR|STRUCT]
+        [--novelty-metric DESCR|STRUCT|TOPDOWN] [--k-inherit 3] [--seed N] \
+        [--sim-preset legacy|zoo] [--final-evals N] [--out-root DIR]
 
 Each invocation without --resume-dir creates a fresh, timestamped output
-directory (__data__/social/ariel/{scheme}/x{x}/rep_{rep}_{timestamp}) so
-re-running the same scheme/x/rep never clobbers a previous run, and prints
-that directory as `RUN_DIR=<path>` on its own stdout line. To continue a run,
-pass that exact directory back in:
+directory ({out_root}/{scheme}/x{x}/k{k}/rep_{rep}[_sel][_fe{N}]_nov{M}_{timestamp}, where
+--out-root defaults to __data__/social/{platform})
+so re-running the same scheme/x/k/rep never clobbers a previous run, and prints
+that directory as `RUN_DIR=<path>` (and the seed as `SEED=<n>`) on their own
+stdout lines.
+
+Seeding: the run seed is --seed, or a stable hash of (scheme, x, k_inherit,
+rep). It seeds `random` and `np.random` in the main process; each evaluated
+individual also gets its own seed drawn from that stream (stored in its tags
+as `eval_seed`) which seeds the worker that runs its inner CMA-ES. The seed,
+args and git commit are saved to run_config.json in the run directory.
+
+Every generation's novelty, fitness and survival of each selection-pool member
+is kept in tags['novelty_history'] and, when the run finishes, written to the
+database's novelty_history table (see core/novelty_history.py).
+
+To continue a run, pass that exact directory back in:
     uv run examples/d_social_learning/experiment.py \
         --scheme lamarckian --x 0.5 --rep 0 --gens 20 \
-        --resume-dir __data__/social/ariel/lamarckian/x05/rep_0_20260813_143022
+        --resume-dir __data__/social/ariel/lamarckian/x05/k3/rep_0_novDESCR_20260813_143022
 """
 
 import argparse
 import datetime
+import hashlib
+import json
 import multiprocessing
 import os
 import random
 import re
+import subprocess
 import sys
 from multiprocessing import Pool
 from pathlib import Path
@@ -51,6 +68,7 @@ from evaluate import evaluate_individual
 from core.fitness import combined_fitness
 from core.inheritance import SCHEMES
 from core.novelty import compute_novelty, compute_novelty_ted
+from core.novelty_history import history_entry, write_table_from_tags
 
 console = Console()
 
@@ -59,8 +77,17 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 
+def _distance_fns() -> dict:
+    """Structural morphology distances for the similar_* schemes."""
+    fns = {"STRUCT": simulator_dependent_functions.similarity_function("STRUCT"), "TOPDOWN": None}
+    if simulator_dependent_functions.simulator == simulator_dependent_functions.SIMULATOR_ARIEL:
+        fns["TOPDOWN"] = simulator_dependent_functions.similarity_function("TOPDOWN")
+    return fns
+
+
 def _pop_state(individuals: list[Individual]) -> list[dict]:
     """Build lightweight state list for inheritance scheme functions."""
+    distance_fns = _distance_fns()
     states = []
     for ind in individuals:
         theta = ind.tags_.get("theta") if ind.tags_ else None
@@ -76,7 +103,7 @@ def _pop_state(individuals: list[Individual]) -> list[dict]:
             "db_id": ind.id,
             "parent_id": parent_id,
             "morphology": ind.genotype["morph"],
-            "similarity_function": simulator_dependent_functions.similarity_function()
+            "distance_fns": distance_fns,
         })
     return states
 
@@ -137,7 +164,10 @@ def _evaluate_with_timeout(
     safe since a fresh Pool is created for every generation anyway.
     """
     from evaluate import init_worker
-    pool = Pool(processes=num_workers, initializer=init_worker, initargs=(platform,))
+    pool = Pool(
+        processes=num_workers, initializer=init_worker,
+        initargs=(platform, simulator_dependent_functions.sim_preset),
+    )
     try:
         async_results = [pool.apply_async(evaluate_individual, (a,)) for a in worker_args]
         results = []
@@ -198,6 +228,7 @@ def build_ops(
     selection_method: str = "elitist",
     tournament_size: int = 4,
     novelty_metric: str = "DESCR",
+    final_evals: int = 0,
 ) -> list[EAOperation]:
     """Return the ordered list of EAOperation steps for the outer EA."""
     @EAOperation
@@ -214,11 +245,11 @@ def build_ops(
             if i % len(parent_pool) == 0:
                 _random.shuffle(parent_pool)
             parent = parent_pool[i % len(parent_pool)]
-            child_morph = simulator_dependent_functions.mutate(parent)
+            child_morph, mutation_info = simulator_dependent_functions.mutate(parent)
             child = Individual()
             parent_brain = parent.genotype_.get("brain") or []
             child.genotype = {"morph": child_morph, "brain": parent_brain}
-            child.tags = {"parent_id": parent.id}
+            child.tags = {"parent_id": parent.id, "mutation": mutation_info}
             offspring_list.append(child)
 
         pop_out = Population(list(population))
@@ -232,50 +263,87 @@ def build_ops(
         offspring = [ind for ind in population if ind.alive and ind.requires_eval]
         all_alive = parents + offspring
 
+        # Generation of this selection step: alive individuals carry
+        # time_of_death = the last committed generation; offspring are still -1.
+        generation = 1 + max(ind.time_of_death for ind in all_alive if ind.time_of_death >= 0)
+
         descs = _compute_descriptors(all_alive)
-        if novelty_metric == "STRUCT":
-            dist_fn = simulator_dependent_functions.similarity_function()
+        if novelty_metric in ("STRUCT", "TOPDOWN"):
+            dist_fn = simulator_dependent_functions.similarity_function(novelty_metric)
             morphs = [ind.genotype_["morph"] for ind in all_alive]
             novelties = compute_novelty_ted(morphs, dist_fn)
         else:
             novelties = compute_novelty(descs)
 
-        all_state = _pop_state(all_alive)
         scheme_fn = SCHEMES[scheme_name]
 
         from ariel.simulation.controllers.distributed_mlp import DistributedMLP
         n_params = DistributedMLP(n_neighbors=simulator_dependent_functions.n_neighbours(), hidden=hidden).n_params
 
-        worker_args = []
-        for i, ind in enumerate(all_alive):
-            if not ind.requires_eval:
+        # On the first step the initial population (no parent) is evaluated
+        # in the same generation as its offspring. Evaluate it first so the
+        # offspring can inherit from it like in every later generation;
+        # otherwise no brain exists yet and every scheme falls back to a
+        # random init for generation 1.
+        to_eval = [i for i, ind in enumerate(all_alive) if ind.requires_eval]
+        phases = [
+            [i for i in to_eval if (all_alive[i].tags_ or {}).get("parent_id") is None],
+            [i for i in to_eval if (all_alive[i].tags_ or {}).get("parent_id") is not None],
+        ]
+        evaluated = {}  # index in all_alive -> (result, eval_seed, init_theta)
+        for phase in phases:
+            if not phase:
                 continue
-            init_mean_arr, donor_ids = scheme_fn(all_state, i, n_params, k_inherit)
-            worker_args.append((
-                ind.genotype_["morph"],
-                init_mean_arr.tolist(),
-                donor_ids,
-                inner_gens,
-                inner_pop,
-                sigma,
-                hidden,
-            ))
+            all_state = _pop_state(all_alive)
+            worker_args = []
+            eval_seeds = []
+            init_thetas = []
+            for i in phase:
+                init_mean_arr, donor_ids = scheme_fn(all_state, i, n_params, k_inherit)
+                # Drawn here in the (seeded) main process, in a fixed order, so
+                # each individual's inner learning is reproducible no matter
+                # which pool worker ends up running it.
+                eval_seed = random.getrandbits(32)
+                eval_seeds.append(eval_seed)
+                init_thetas.append(init_mean_arr.tolist())
+                worker_args.append((
+                    all_alive[i].genotype_["morph"],
+                    init_thetas[-1],
+                    donor_ids,
+                    inner_gens,
+                    inner_pop,
+                    sigma,
+                    hidden,
+                    eval_seed,
+                    final_evals,
+                ))
 
-        if num_workers > 1:
-            results = _evaluate_with_timeout(worker_args, num_workers, eval_timeout, platform)
-        else:
-            results = [evaluate_individual(a) for a in worker_args]
+            if num_workers > 1:
+                results = _evaluate_with_timeout(worker_args, num_workers, eval_timeout, platform)
+            else:
+                # evaluate_individual reseeds random/np.random with each eval_seed;
+                # in-process that would clobber the main stream, so restore it.
+                rng_state = random.getstate(), np.random.get_state()
+                results = [evaluate_individual(a) for a in worker_args]
+                random.setstate(rng_state[0])
+                np.random.set_state(rng_state[1])
+
+            for i, r, eval_seed, init_theta in zip(phase, results, eval_seeds, init_thetas):
+                evaluated[i] = (r, eval_seed, init_theta)
+                # Expose the learned brain to the next phase's donor schemes
+                # (_pop_state reads these tags).
+                all_alive[i].tags = {"theta": r["best_theta"], "distance": r["distance"]}
 
         distances = []
-        i_evaluated = 0
         for i, ind in enumerate(all_alive):
-            if ind.requires_eval:
-                r = results[i_evaluated]
-                i_evaluated += 1
+            if i in evaluated:
+                r, eval_seed, init_theta = evaluated[i]
                 theta_list = r["best_theta"]
             else:
                 r = ind.tags
                 theta_list = ind.tags["theta"]
+                eval_seed = ind.tags.get("eval_seed")
+                init_theta = ind.tags.get("init_theta")
             distance = r["distance"]
             distances.append(distance)
             novelty = float(novelties[i])
@@ -292,15 +360,28 @@ def build_ops(
                 "novelty": novelty,
                 "descriptor": desc.tolist(),
                 "theta": theta_list,
+                # Brain the inner learner started from (donor mean, parent's
+                # brain, or a random draw), before any learning.
+                "init_theta": init_theta,
                 "init_fitness": r["init_fitness"],
                 "learning_curve": r["learning_curve"],
-                "donor_ids": r["donor_ids"]
+                "donor_ids": r["donor_ids"],
+                "eval_seed": eval_seed,
+                # --final-evals > 0 only: distance is the mean over the final
+                # perturbed episodes; CMA-ES's best single-episode score and
+                # the per-episode values are kept alongside (see evaluate.py).
+                **{k: r[k] for k in ("distance_cma", "final_eval_fitness",
+                                     "final_eval_displacement", "displacement") if k in r},
             } | simulator_dependent_functions.extra_tags(r)
             ind.genotype_ = {"morph": ind.genotype_["morph"], "brain": theta_list}
 
-        # Calculate normalized fitness
-        min_dist, max_dist = min(distances), max(distances)
-        min_nov, max_nov = min(novelties), max(novelties)
+        # Calculate normalized fitness. Range over finite values only: a
+        # failed individual's NaN distance would otherwise poison min()/max()
+        # (order-dependently) and turn everyone's fitness into NaN -> -inf.
+        finite_dist = [d for d in distances if np.isfinite(d)] or [0.0]
+        finite_nov = [float(n) for n in novelties if np.isfinite(n)] or [0.0]
+        min_dist, max_dist = min(finite_dist), max(finite_dist)
+        min_nov, max_nov = min(finite_nov), max(finite_nov)
         for i, ind in enumerate(all_alive):
             norm_distance = (distances[i] - min_dist) / (max_dist - min_dist) if max_dist > min_dist else 0.0
             norm_novelty = (float(novelties[i]) - min_nov) / (max_nov - min_nov) if max_nov > min_nov else 0.0
@@ -321,8 +402,13 @@ def build_ops(
         else:
             survivors = selection_pool.best(n=mu).to_list()
         survivor_ids = {id(s) for s in survivors}
-        for ind in all_alive:
+        for i, ind in enumerate(all_alive):
             ind.alive = id(ind) in survivor_ids
+            history = list(ind.tags_.get("novelty_history", []))
+            history.append(history_entry(
+                generation, novelty_metric, float(novelties[i]), float(ind.fitness_), ind.alive,
+            ))
+            ind.tags = {"novelty_history": history}
 
         return Population(all_alive)
 
@@ -370,6 +456,42 @@ def _next_db_path(out_dir: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Seeding / run config
+# ---------------------------------------------------------------------------
+
+RUN_CONFIG = "run_config.json"
+# Arguments a --resume-dir continuation must repeat exactly (--gens, --workers,
+# --eval-timeout and --out-root may differ).
+RESUME_FIXED_ARGS = (
+    "scheme", "x", "rep", "k_inherit", "pop", "lam", "comma_selection", "selection",
+    "tournament_size", "inner_gens", "inner_pop", "sigma", "hidden", "platform",
+    "sim_preset", "final_evals", "novelty_metric",
+)
+
+
+def _default_seed(scheme: str, x: float, k_inherit: int, rep: int) -> int:
+    """Stable 32-bit seed from (scheme, x, k_inherit, rep). sha256 rather
+    than the built-in hash(), which is salted per process."""
+    key = f"{scheme}|{x}|{k_inherit}|{rep}".encode()
+    return int.from_bytes(hashlib.sha256(key).digest()[:4], "little")
+
+
+def _seed_all(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+
+
+def _git_commit() -> str | None:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=_THIS_DIR,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -411,13 +533,45 @@ def main() -> None:
              "database_part{N}.db in that same directory. If omitted, a fresh "
              "timestamped directory is created instead.",
     )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Run seed. Defaults to a stable hash of (scheme, x, k_inherit, rep). "
+             "Saved to run_config.json in the run directory. Ignored with "
+             "--resume-dir if that directory already has a run_config.json.",
+    )
+    parser.add_argument(
+        "--allow-novelty-change", action="store_true",
+        help="With --resume-dir, allow a --novelty-metric different from the one the run "
+             "was started with (otherwise an error: it changes selection mid-run).",
+    )
     parser.add_argument("--platform", type=str, choices=["ariel", "evogym"], default="ariel")
     parser.add_argument(
-        "--novelty-metric", choices=["DESCR", "STRUCT"], default="DESCR",
+        "--sim-preset", choices=["legacy", "zoo"], default="legacy",
+        help="Simulation constants (sim_ariel/evaluator.py PRESETS): legacy = the original "
+             "local modules, 30 s episodes at 55.6 Hz control and absolute final x; zoo = the "
+             "zoo module physics, 15 s episodes at 20 Hz control, displacement from the start "
+             "(--platform ariel only).",
+    )
+    parser.add_argument(
+        "--final-evals", type=int, default=0,
+        help="Score each robot as the mean fitness of its learned controller over this many "
+             "episodes with a jittered start state (sim_ariel/evaluator.py PERTURB_*), instead "
+             "of CMA-ES's best single-episode fitness, which is biased upwards for "
+             "contact-chaotic gaits. Selection and the donor schemes use that score. "
+             "0 (default) keeps the original scoring (--platform ariel only).",
+    )
+    parser.add_argument(
+        "--out-root", type=str, default=None,
+        help="Directory the {scheme}/x{x}/k{k}/rep_* run directories are created under "
+             "(default __data__/social/{platform}).",
+    )
+    parser.add_argument(
+        "--novelty-metric", choices=["DESCR", "STRUCT", "TOPDOWN"], default="DESCR",
         help="Distance metric used for the fitness-blend novelty term (core/fitness.py's "
              "combined_fitness): DESCR = Euclidean distance on the morphological-descriptors "
-             "vector (default), STRUCT = tree edit distance (--platform ariel) or hamming distance "
-             "(--platform evogym).",
+             "vector (default), STRUCT = time-budgeted graph edit distance (--platform ariel) or "
+             "hamming distance (--platform evogym), TOPDOWN = exact top-down tree edit "
+             "distance (--platform ariel only).",
     )
     args = parser.parse_args()
 
@@ -427,7 +581,22 @@ def main() -> None:
     if args.selection == "tournament" and args.tournament_size < 2:
         parser.error("--tournament-size must be >= 2 when --selection=tournament")
 
+    if args.platform != "ariel" and (args.novelty_metric == "TOPDOWN" or args.scheme.endswith("_TOPDOWN")):
+        parser.error("TOPDOWN (novelty metric and similar_*_TOPDOWN schemes) is ariel-only")
+
+    if args.platform != "ariel" and args.sim_preset != "legacy":
+        parser.error("--sim-preset other than legacy is ariel-only")
+
+    if args.final_evals < 0 or (args.final_evals and args.platform != "ariel"):
+        parser.error("--final-evals must be >= 0 and is ariel-only")
+
     simulator_dependent_functions.simulator = args.platform
+
+    now = datetime.datetime.now()
+    if args.seed is not None:
+        seed, seed_source = args.seed, "arg"
+    else:
+        seed, seed_source = _default_seed(args.scheme, args.x, args.k_inherit, args.rep), "hash"
 
     if args.resume_dir:
         out_dir = Path(args.resume_dir)
@@ -435,34 +604,83 @@ def main() -> None:
             parser.error(f"--resume-dir does not exist: {out_dir}")
         if not (out_dir / "database.db").exists():
             parser.error(f"--resume-dir has no database.db to resume from: {out_dir}")
+        config_path = out_dir / RUN_CONFIG
+        if config_path.exists():
+            config = json.loads(config_path.read_text())
+            seed, seed_source = config["seed"], config["seed_source"]
+            started = config.get("args") or {}
+            # Everything that defines the experiment must match the run being
+            # continued, or the generations after the resume would silently be
+            # a different experiment. Arguments added after a run was started
+            # count as their default (e.g. --sim-preset legacy).
+            if started:
+                for name in RESUME_FIXED_ARGS:
+                    was, now_val = started.get(name, parser.get_default(name)), getattr(args, name)
+                    if was == now_val or (name == "novelty_metric" and args.allow_novelty_change):
+                        continue
+                    hint = " (pass --allow-novelty-change to do it anyway)" if name == "novelty_metric" else ""
+                    parser.error(
+                        f"run was started with --{name.replace('_', '-')} {was}, resuming with "
+                        f"{now_val} would change the experiment mid-run{hint}"
+                    )
+        else:
+            # Run predates run_config.json: record the seed it would have had.
+            config = {"seed": seed, "seed_source": seed_source, "args": None,
+                      "started": None, "git_commit": None}
+        # The RNG state at the point the previous part stopped isn't saved, so
+        # the continuation gets its own seed derived from (seed, part number):
+        # reproducible, but not bit-identical to an uninterrupted run.
+        next_db = _next_db_path(out_dir)
+        part_n = int(re.search(r"database_part(\d+)\.db", next_db.name).group(1))
+        part_seed = int(np.random.SeedSequence([seed, part_n]).generate_state(1)[0])
+        config.setdefault("resumes", []).append({
+            "db_file": next_db.name, "seed": part_seed, "args": vars(args),
+            "started": now.isoformat(timespec="seconds"), "git_commit": _git_commit(),
+        })
+        config_path.write_text(json.dumps(config, indent=2))
+        _seed_all(part_seed)
     else:
         x_str = str(args.x).replace(".", "")
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
         # Non-default selection schemes and novelty metric get a label in the
         # rep-dir name so runs of different variants for the same
         # (scheme, x, rep) don't get silently mixed together by
         # analysis/curve_utils.py's discover_reps (which globs
-        # "rep_*/database.db"). The true default (mu+lambda, elitist, DESCR
+        # "rep_*/database.db" and "k*/rep_*/database.db"). The true default (mu+lambda, elitist, DESCR
         # novelty) keeps the original unlabeled name so every other run
-        # script's output layout is unaffected.
+        # script's output layout is unaffected. The timestamp suffix keeps a
+        # re-run of the same (scheme, x, k, rep) from deleting an earlier one.
         sel_bits = []
         if args.comma_selection:
             sel_bits.append("comma")
         if args.selection == "tournament":
             sel_bits.append(f"tourn{args.tournament_size}")
+        if args.final_evals:
+            sel_bits.append(f"fe{args.final_evals}")
         sel_suffix = ("_" + "_".join(sel_bits)) if sel_bits else ""
-        novelty_suffix = "_novSTRUCT" if args.novelty_metric == "STRUCT" else "_novDESCR"
-        out_dir = Path(
-            f"__data__/social/{args.platform}/{args.scheme}/x{x_str}/k{args.k_inherit}/rep_{args.rep}{sel_suffix}{novelty_suffix}"
+        novelty_suffix = f"_nov{args.novelty_metric}"
+        out_root = Path(args.out_root or f"__data__/social/{args.platform}")
+        out_dir = out_root / (
+            f"{args.scheme}/x{x_str}/k{args.k_inherit}/rep_{args.rep}{sel_suffix}{novelty_suffix}_{timestamp}"
         )
         out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / RUN_CONFIG).write_text(json.dumps({
+            "seed": seed, "seed_source": seed_source, "args": vars(args),
+            "started": now.isoformat(timespec="seconds"), "git_commit": _git_commit(),
+        }, indent=2))
+        _seed_all(seed)
+
+    # Before anything builds a body: the zoo preset also changes the module
+    # geometry that random_tree's collision checks use.
+    simulator_dependent_functions.set_sim_preset(args.sim_preset)
 
     # Printed on its own line (not via `console`, whose rich markup/box-drawing
     # would make this harder to grep) so calling scripts can pick up exactly
-    # which directory this run landed in — see run_social_parta.sh.
+    # which directory this run landed in.
     print(f"RUN_DIR={out_dir}")
+    print(f"SEED={seed}")
 
-    console.rule(f"[bold cyan]{args.platform.capitalize} | scheme={args.scheme} x={args.x} rep={args.rep} dir={out_dir}")
+    console.rule(f"[bold cyan]{args.platform.capitalize()} | scheme={args.scheme} x={args.x} rep={args.rep} dir={out_dir}")
 
     ops = build_ops(
         scheme_name=args.scheme,
@@ -480,25 +698,31 @@ def main() -> None:
         selection_method=args.selection,
         tournament_size=args.tournament_size,
         novelty_metric=args.novelty_metric,
+        final_evals=args.final_evals,
     )
 
     if args.resume_dir:
+        db_path = _next_db_path(out_dir)
         ea = EA(
             restart=_latest_db_path(out_dir),
             operations=ops,
             num_steps=args.gens,
-            db_file_path=_next_db_path(out_dir),
+            db_file_path=db_path,
             db_handling="delete",
         )
     else:
+        db_path = out_dir / "database.db"
         ea = EA(
             population=make_initial_population(args.pop),
             operations=ops,
             num_steps=args.gens,
-            db_file_path=out_dir / "database.db",
+            db_file_path=db_path,
             db_handling="delete",
         )
     ea.run()
+    ea.engine.dispose()
+    n_rows = write_table_from_tags(db_path)
+    console.log(f"novelty_history: {n_rows} rows written to {db_path}")
 
     console.rule("[bold green]Done")
 
